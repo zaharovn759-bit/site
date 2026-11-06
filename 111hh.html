@@ -1,0 +1,562 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Распознавание одноклассников</title>
+<script src="https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js"></script>
+<style>
+  * { box-sizing: border-box; font-family: system-ui, -apple-system, Segoe UI, sans-serif; }
+  body { margin: 0; background: #0f172a; color: #e2e8f0; }
+  .center { display: flex; min-height: 100vh; align-items: center; justify-content: center; }
+  .card { background: #1e293b; padding: 24px; border-radius: 12px; box-shadow: 0 10px 30px rgba(0,0,0,.4); }
+  h1, h2 { margin: 0 0 16px; }
+  h1 { font-size: 22px; }
+  h2 { font-size: 18px; }
+  input[type=text], input[type=password], input[type=file] {
+    width: 100%; padding: 10px 12px; margin: 6px 0 12px;
+    border-radius: 8px; border: 1px solid #334155; background: #0f172a; color: #e2e8f0;
+  }
+  button, label.btn {
+    padding: 10px 16px; border: none; border-radius: 8px; cursor: pointer;
+    background: #3b82f6; color: #fff; font-weight: 600; display: inline-block;
+  }
+  button:hover, label.btn:hover { background: #2563eb; }
+  button.danger { background: #ef4444; }
+  button.danger:hover { background: #dc2626; }
+  .ghost { background: #334155 !important; }
+  .ghost:hover { background: #475569 !important; }
+  .tabs { display: flex; gap: 8px; margin-bottom: 20px; }
+  .tab { padding: 10px 16px; border-radius: 8px; background: #1e293b; cursor: pointer; }
+  .tab.active { background: #3b82f6; }
+  .wrap { max-width: 1000px; margin: 0 auto; padding: 24px; }
+  .preview { position: relative; display: inline-block; max-width: 100%; margin-top: 12px; }
+  .preview img { max-width: 100%; display: block; border-radius: 8px; }
+  .preview canvas { position: absolute; top: 0; left: 0; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 12px; margin-top: 16px; }
+  .person { background: #1e293b; padding: 8px; border-radius: 8px; text-align: center; }
+  .person img { width: 100%; height: 120px; object-fit: cover; border-radius: 6px; }
+  .person button { margin-top: 6px; font-size: 12px; padding: 4px 8px; }
+  .error { color: #f87171; font-size: 14px; }
+  .ok { color: #4ade80; font-size: 14px; }
+  .muted { color: #94a3b8; font-size: 13px; }
+  #loader { display: none; margin-top: 12px; color: #fbbf24; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+</style>
+</head>
+<body>
+
+<!-- ЭКРАН ВХОДА -->
+<div id="loginScreen" class="center">
+  <div class="card" style="width: 340px;">
+    <h1>🔐 Вход</h1>
+    <input type="password" id="passInput" placeholder="Введите пароль" autofocus>
+    <button onclick="tryLogin()" style="width:100%">Войти</button>
+    <p id="loginError" class="error" style="min-height:18px;margin-top:8px;"></p>
+  </div>
+</div>
+
+<!-- ОСНОВНОЙ ИНТЕРФЕЙС -->
+<div id="app" style="display:none">
+  <div class="wrap">
+    <h1>📸 Распознавание одноклассников</h1>
+    <div class="tabs">
+      <div class="tab active" data-tab="scan" onclick="switchTab('scan')">Распознать фото</div>
+      <div class="tab" data-tab="admin" onclick="switchTab('admin')">Админ-панель</div>
+    </div>
+
+    <section id="scanSection">
+      <div class="card">
+        <h2>Загрузите групповое фото</h2>
+        <input type="file" id="groupFile" accept="image/*">
+        <div class="preview" id="previewWrap" style="display:none">
+          <img id="groupImg">
+          <canvas id="resultCanvas"></canvas>
+        </div>
+        <br>
+        <button id="scanBtn" onclick="scanGroup()" disabled>Распознать лица</button>
+        <div id="loader">⏳ Загрузка моделей и обработка...</div>
+        <div id="scanSummary" class="muted" style="margin-top:12px;"></div>
+      </div>
+    </section>
+
+    <section id="adminSection" style="display:none">
+      <div class="card">
+        <h2>Добавить одноклассника</h2>
+        <input type="text" id="cmName" placeholder="Имя и фамилия">
+        <input type="file" id="cmPhoto" accept="image/*">
+        <button onclick="addClassmate()">Добавить в базу</button>
+        <span id="addStatus" class="ok" style="margin-left:10px;"></span>
+
+        <div class="muted" style="margin-top:12px;">
+          В базе: <b id="cmCount">0</b> чел. · Хранилище: <span id="storageInfo">…</span>
+        </div>
+
+        <div class="grid" id="classmatesList"></div>
+
+        <hr style="border-color:#334155;margin:20px 0;">
+
+        <div class="row">
+          <button class="ghost" onclick="exportDB()">⬇ Скачать базу (.json)</button>
+          <label class="btn ghost">
+            ⬆ Загрузить базу
+            <input type="file" id="importFile" accept="application/json"
+                   style="display:none" onchange="importDB(event)">
+          </label>
+          <button class="danger" onclick="resetAll()">🗑 Сбросить всю базу</button>
+        </div>
+        <div class="muted" style="margin-top:10px;">
+          💡 Раз в месяц скачивай .json и храни в облаке — это страховка от очистки браузера.
+        </div>
+      </div>
+    </section>
+  </div>
+</div>
+
+<script>
+/* ==========================================================
+   КОНФИГ
+========================================================== */
+const ADMIN_PASSWORD = '7732';
+const MODEL_URL = 'https://cdn.jsdelivr.net/gh/justadudewhohacks/face-api.js@master/weights';
+const DB_NAME = 'facesDB';
+const DB_VERSION = 1;
+const STORE = 'people';
+const OLD_LS_KEY = 'classmates_db_v1';  // старая база из localStorage (миграция)
+
+/* ==========================================================
+   IndexedDB — маленькая обёртка
+========================================================== */
+function openDB() {
+  return new Promise((res, rej) => {
+    const req = indexedDB.open(DB_NAME, DB_VERSION);
+    req.onupgradeneeded = e => {
+      const db = e.target.result;
+      if (!db.objectStoreNames.contains(STORE)) {
+        db.createObjectStore(STORE, { keyPath: 'id' });
+      }
+    };
+    req.onsuccess = () => res(req.result);
+    req.onerror = () => rej(req.error);
+  });
+}
+async function dbGetAll() {
+  const db = await openDB();
+  return new Promise((res, rej) => {
+    const req = db.transaction(STORE, 'readonly').objectStore(STORE).getAll();
+    req.onsuccess = () => res(req.result || []);
+    req.onerror = () => rej(req.error);
+  });
+}
+async function dbPut(item) {
+  const db = await openDB();
+  return new Promise((res, rej) => {
+    const tx = db.transaction(STORE, 'readwrite');
+    tx.objectStore(STORE).put(item);
+    tx.oncomplete = () => res();
+    tx.onerror = () => rej(tx.error);
+  });
+}
+async function dbBulkPut(items) {
+  const db = await openDB();
+  return new Promise((res, rej) => {
+    const tx = db.transaction(STORE, 'readwrite');
+    items.forEach(i => tx.objectStore(STORE).put(i));
+    tx.oncomplete = () => res();
+    tx.onerror = () => rej(tx.error);
+  });
+}
+async function dbDelete(id) {
+  const db = await openDB();
+  return new Promise((res, rej) => {
+    const tx = db.transaction(STORE, 'readwrite');
+    tx.objectStore(STORE).delete(id);
+    tx.oncomplete = () => res();
+    tx.onerror = () => rej(tx.error);
+  });
+}
+async function dbClear() {
+  const db = await openDB();
+  return new Promise((res, rej) => {
+    const tx = db.transaction(STORE, 'readwrite');
+    tx.objectStore(STORE).clear();
+    tx.oncomplete = () => res();
+    tx.onerror = () => rej(tx.error);
+  });
+}
+
+/* ==========================================================
+   Persistent Storage + миграция
+========================================================== */
+async function requestPersistence() {
+  if (navigator.storage?.persist) {
+    try {
+      const granted = await navigator.storage.persist();
+      console.log('Persistent storage granted:', granted);
+      return granted;
+    } catch (e) { console.warn(e); }
+  }
+  return false;
+}
+async function showStorageInfo() {
+  const el = document.getElementById('storageInfo');
+  if (!navigator.storage?.estimate) { el.textContent = 'н/д'; return; }
+  const est = await navigator.storage.estimate();
+  const used = (est.usage / 1024 / 1024).toFixed(2);
+  const quota = (est.quota / 1024 / 1024).toFixed(0);
+  const persisted = await navigator.storage.persisted?.();
+  el.textContent = `${used} / quotaМБ{persisted ? ' (защищено от очистки)' : ''}`;
+}
+
+async function migrateFromLocalStorage() {
+  const old = localStorage.getItem(OLD_LS_KEY);
+  if (!old) return;
+  try {
+    const items = JSON.parse(old);
+    if (!Array.isArray(items) || !items.length) return;
+    const existing = await dbGetAll();
+    if (existing.length) return; // уже есть — не трогаем
+    await dbBulkPut(items);
+    console.log('Migrated', items.length, 'records from localStorage');
+  } catch (e) { console.error('Migration failed:', e); }
+}
+
+/* ==========================================================
+   Загрузка моделей
+========================================================== */
+let modelsReady = false;
+async function loadModels() {
+  try {
+    await Promise.all([
+      faceapi.nets.ssdMobilenetv1.loadFromUri(MODEL_URL),
+      faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL),
+      faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL),
+    ]);
+    modelsReady = true;
+    document.getElementById('scanBtn').disabled = false;
+  } catch (e) {
+    console.error(e);
+    alert('Не удалось загрузить модели распознавания. Проверьте интернет.');
+  }
+}
+
+/* ==========================================================
+   Состояние
+========================================================== */
+let classmates = [];
+let matcher = null;
+
+function buildMatcher() {
+  if (!classmates.length) { matcher = null; return; }
+  const labeled = classmates.map(c =>
+    new faceapi.LabeledFaceDescriptors(c.name, [new Float32Array(c.descriptor)])
+  );
+  matcher = new faceapi.FaceMatcher(labeled, 0.5);
+}
+
+async function loadDB() {
+  await migrateFromLocalStorage();
+  classmates = await dbGetAll();
+  buildMatcher();
+  renderClassmates();
+  showStorageInfo();
+}
+
+/* ==========================================================
+   Авторизация
+========================================================== */
+function tryLogin() {
+  const val = document.getElementById('passInput').value;
+  if (val === ADMIN_PASSWORD) {
+    sessionStorage.setItem('logged_in', '1');
+    document.getElementById('loginScreen').style.display = 'none';
+    document.getElementById('app').style.display = 'block';
+    loadDB();
+  } else {
+    document.getElementById('loginError').textContent = 'Неверный пароль';
+    document.getElementById('passInput').value = '';
+  }
+}
+document.getElementById('passInput').addEventListener('keydown', e => {
+  if (e.key === 'Enter') tryLogin();
+});
+
+/* ==========================================================
+   Вкладки
+========================================================== */
+function switchTab(tab) {
+  document.querySelectorAll('.tab').forEach(t =>
+    t.classList.toggle('active', t.dataset.tab === tab));
+  document.getElementById('scanSection').style.display = tab === 'scan' ? 'block' : 'none';
+  document.getElementById('adminSection').style.display = tab === 'admin' ? 'block' : 'none';
+}
+
+/* ==========================================================
+   Хелперы
+========================================================== */
+function loadImg(src) {
+  return new Promise((res, rej) => {
+    const img = new Image();
+    img.onload = () => res(img);
+    img.onerror = rej;
+    img.src = src;
+  });
+}
+function fileToDataURL(file) {
+  return new Promise((res, rej) => {
+    const r = new FileReader();
+    r.onload = () => res(r.result);
+    r.onerror = rej;
+    r.readAsDataURL(file);
+  });
+}
+function makeThumb(img, size = 160) {
+  const c = document.createElement('canvas');
+  const ratio = Math.min(size / img.width, size / img.height);
+  c.width = Math.round(img.width * ratio);
+  c.height = Math.round(img.height * ratio);
+  c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+  return c.toDataURL('image/jpeg', 0.75);
+}
+function dataURLtoBlob(dataurl) {
+  const [meta, b64] = dataurl.split(',');
+  const mime = meta.match(/:(.*?);/)[1];
+  const bin = atob(b64);
+  const arr = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+  return new Blob([arr], { type: mime });
+}
+function escapeHtml(s) {
+  return s.replace(/[&<>"']/g, ch =>
+    ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[ch]));
+}
+
+/* ==========================================================
+   Добавление одноклассника
+========================================================== */
+async function addClassmate() {
+  const name = document.getElementById('cmName').value.trim();
+  const file = document.getElementById('cmPhoto').files[0];
+  const status = document.getElementById('addStatus');
+
+  if (!name) { status.className = 'error'; status.textContent = 'Введите имя'; return; }
+  if (!file) { status.className = 'error'; status.textContent = 'Выберите фото'; return; }
+  if (!modelsReady) { status.className = 'error'; status.textContent = 'Модели ещё грузятся'; return; }
+
+  status.className = 'muted'; status.textContent = 'Обработка...';
+
+  try {
+    const dataUrl = await fileToDataURL(file);
+    const img = await loadImg(dataUrl);
+
+    const det = await faceapi
+      .detectSingleFace(img, new faceapi.SsdMobilenetv1Options({ minConfidence: 0.5 }))
+      .withFaceLandmarks()
+      .withFaceDescriptor();
+
+    if (!det) {
+      status.className = 'error';
+      status.textContent = 'Лицо не найдено. Нужно чёткое фото одного лица.';
+      return;
+    }
+
+    const record = {
+      id: Date.now() + '_' + Math.random().toString(36).slice(2, 7),
+      name,
+      thumb: makeThumb(img),
+      descriptor: Array.from(det.descriptor)
+    };
+
+    await dbPut(record);
+    classmates.push(record);
+    buildMatcher();
+    renderClassmates();
+    showStorageInfo();
+
+    document.getElementById('cmName').value = '';
+    document.getElementById('cmPhoto').value = '';
+    status.className = 'ok';
+    status.textContent = '✓ Добавлено';
+    setTimeout(() => status.textContent = '', 2000);
+  } catch (e) {
+    console.error(e);
+    status.className = 'error';
+    status.textContent = 'Ошибка обработки фото';
+  }
+}
+
+/* ==========================================================
+   Список
+========================================================== */
+function renderClassmates() {
+  const list = document.getElementById('classmatesList');
+  document.getElementById('cmCount').textContent = classmates.length;
+  list.innerHTML = '';
+  if (!classmates.length) {
+    list.innerHTML = '<div class="muted">Пока никого не добавлено.</div>';
+    return;
+  }
+  classmates.forEach(c => {
+    const div = document.createElement('div');
+    div.className = 'person';
+    div.innerHTML = `
+      <img src="${c.thumb}" alt="">
+      <div style="margin-top:6px;font-weight:600;">${escapeHtml(c.name)}</div>
+      <button class="danger" onclick="removeClassmate('${c.id}')">Удалить</button>
+    `;
+    list.appendChild(div);
+  });
+}
+async function removeClassmate(id) {
+  await dbDelete(id);
+  classmates = classmates.filter(c => c.id !== id);
+  buildMatcher();
+  renderClassmates();
+  showStorageInfo();
+}
+async function resetAll() {
+  if (!confirm('Удалить всех одноклассников из базы?')) return;
+  await dbClear();
+  classmates = [];
+  buildMatcher();
+  renderClassmates();
+  showStorageInfo();
+}
+
+/* ==========================================================
+   Экспорт / импорт (страховка "навсегда")
+========================================================== */
+function exportDB() {
+  if (!classmates.length) { alert('База пуста'); return; }
+  const blob = new Blob([JSON.stringify(classmates, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `classmates_backup_${new Date().toISOString().slice(0,10)}.json`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+async function importDB(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+  const text = await file.text();
+  try {
+    const data = JSON.parse(text);
+    if (!Array.isArray(data)) throw new Error('Неверный формат');
+    if (!confirm(`Импортировать ${data.length} записей? Текущая база будет заменена.`)) {
+      e.target.value = ''; return;
+    }
+    await dbClear();
+    await dbBulkPut(data);
+    await loadDB();
+    alert('✓ База загружена');
+  } catch (err) {
+    alert('Ошибка чтения файла: ' + err.message);
+  }
+  e.target.value = '';
+}
+
+/* ==========================================================
+   Сканирование группового фото
+========================================================== */
+document.getElementById('groupFile').addEventListener('change', async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  const dataUrl = await fileToDataURL(file);
+  const img = document.getElementById('groupImg');
+  img.src = dataUrl;
+  document.getElementById('previewWrap').style.display = 'inline-block';
+  document.getElementById('scanSummary').textContent = '';
+  const canvas = document.getElementById('resultCanvas');
+  canvas.getContext('2d').clearRect(0, 0, canvas.width, canvas.height);
+});
+
+async function scanGroup() {
+  if (!modelsReady) return;
+  const img = document.getElementById('groupImg');
+  if (!img.src) return;
+
+  document.getElementById('loader').style.display = 'block';
+  document.getElementById('scanSummary').textContent = '';
+
+  try {
+    await new Promise(r => setTimeout(r, 100));
+    const displaySize = { width: img.clientWidth, height: img.clientHeight };
+    const canvas = document.getElementById('resultCanvas');
+    faceapi.matchDimensions(canvas, displaySize);
+
+    const detections = await faceapi
+      .detectAllFaces(img, new faceapi.SsdMobilenetv1Options({ minConfidence: 0.45 }))
+      .withFaceLandmarks()
+      .withFaceDescriptors();
+
+    const resized = faceapi.resizeResults(detections, displaySize);
+    const ctx = canvas.getContext('2d');
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    const found = new Set();
+
+    resized.forEach(det => {
+      const box = det.detection.box;
+      let label = 'Неизвестный', color = '#ef4444', conf = '';
+
+      if (matcher) {
+        const best = matcher.findBestMatch(det.descriptor);
+        if (best.label !== 'unknown') {
+          label = best.label;
+          color = '#22c55e';
+          conf = ` ${(1 - best.distance).toFixed(2)}`;
+          found.add(best.label);
+        }
+      }
+
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 3;
+      ctx.strokeRect(box.x, box.y, box.width, box.height);
+
+      const text = `label{conf}`;
+      ctx.font = 'bold 16px sans-serif';
+      const tw = ctx.measureText(text).width;
+      ctx.fillStyle = color;
+      ctx.fillRect(box.x, box.y - 24, tw + 12, 24);
+      ctx.fillStyle = '#fff';
+      ctx.fillText(text, box.x + 6, box.y - 7);
+    });
+
+    const total = resized.length;
+    let summary = `Лиц: ${total}. Узнано: ${found.size}. Неизвестных: ${total - found.size}.`;
+    if (found.size) summary += `  |  ${[...found].join(', ')}`;
+    document.getElementById('scanSummary').textContent = summary;
+  } catch (e) {
+    console.error(e);
+    document.getElementById('scanSummary').textContent = 'Ошибка распознавания.';
+  } finally {
+    document.getElementById('loader').style.display = 'none';
+  }
+}
+
+/* ==========================================================
+   Старт
+========================================================== */
+loadModels();
+requestPersistence();
+
+// авто-вход, если уже логинился в этой сессии
+if (sessionStorage.getItem('logged_in') === '1') {
+  document.getElementById('loginScreen').style.display = 'none';
+  document.getElementById('app').style.display = 'block';
+  loadDB();
+}
+
+// запросить у браузера защиту от автоочистки при первом взаимодействии
+window.addEventListener('click', function once() {
+  requestPersistence();
+  window.removeEventListener('click', once);
+}, { once: true });
+</script>
+</body>
+</html>
+
+
+
